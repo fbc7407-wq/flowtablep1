@@ -617,6 +617,55 @@ button {
     border-top: 2px solid #ffe2c4;
 }
 
+/* Payment Info Box */
+.payment-info-box {
+    margin-top: 10px;
+    padding: 16px;
+    border-radius: 18px;
+    animation: fadeIn 0.3s ease both;
+}
+
+.payment-info-box.sinpe {
+    background: #fff1df;
+    border: 1px solid #ffd7ad;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.payment-info-box.card-fields {
+    background: #fdfdfd;
+    border: 1px solid #ffd7ad;
+    display: grid;
+    gap: 12px;
+}
+
+.info-label {
+    font-size: 13px;
+    color: #7a6254;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.info-value {
+    font-size: 24px;
+    color: #201510;
+    font-weight: 1000;
+    letter-spacing: 0.05em;
+}
+
+.card-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 .checkout-actions {
     display: grid;
     gap: 12px;

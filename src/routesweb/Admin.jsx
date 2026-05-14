@@ -7,6 +7,7 @@ import {
   updateDoc,
   addDoc,
   deleteDoc,
+  onSnapshot,
 } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth, db, storage } from "../firebase/config";
@@ -20,7 +21,7 @@ const ADMIN_CREDENTIALS = {
 function AdminPanel() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState("productos");
+  const [activeTab, setActiveTab] = useState("dashboard");
 
   // Login
   const [email, setEmail] = useState("");
@@ -44,41 +45,110 @@ function AdminPanel() {
   });
 
   useEffect(() => {
-    // Verificar si ya estaba logueado localmente
     const isLogged = localStorage.getItem("admin_logged") === "true";
     if (isLogged) {
       setUser({ name: "Administrador" });
     }
-    
-    // Cargar datos de Firebase
-    loadProducts();
-    loadOrders();
-    setLoading(false);
+
+    let isMounted = true;
+
+    // Check if Firebase is actually configured
+    const isFirebaseConfigured = auth?.app?.options?.apiKey && 
+                                 auth.app.options.apiKey !== "TU_API_KEY";
+
+    if (isFirebaseConfigured) {
+      const unsubProducts = onSnapshot(collection(db, "products"), (snapshot) => {
+        if (!isMounted) return;
+        const productsData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          active: true,
+          ...doc.data()
+        }));
+        setProducts(productsData);
+        setLoading(false);
+      }, (err) => {
+        console.error("Firestore products error:", err);
+        setLoading(false);
+      });
+
+      const unsubOrders = onSnapshot(collection(db, "orders"), (snapshot) => {
+        if (!isMounted) return;
+        const ordersData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        ordersData.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        setOrders(ordersData);
+      }, (err) => {
+        console.error("Firestore orders error:", err);
+      });
+
+      return () => {
+        isMounted = false;
+        unsubProducts();
+        unsubOrders();
+      };
+    } else {
+      // Local development fallback con polling para simular tiempo real
+      const syncLocalData = () => {
+        if (!isMounted) return;
+        const localProducts = JSON.parse(localStorage.getItem("local_products") || "[]");
+        const localOrders = JSON.parse(localStorage.getItem("local_orders") || "[]");
+        setProducts(localProducts);
+        setOrders(localOrders);
+        setLoading(false);
+      };
+
+      syncLocalData();
+      const interval = setInterval(syncLocalData, 3000); // Poll cada 3s
+
+      return () => {
+        isMounted = false;
+        clearInterval(interval);
+      };
+    }
   }, []);
 
-  const loadProducts = async () => {
-    try {
-      const querySnapshot = await getDocs(collection(db, "products"));
-      const productsData = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setProducts(productsData);
-    } catch (error) {
-      console.error("Error loading products:", error);
+  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+    const isFirebaseConfigured = auth?.app?.options?.apiKey && auth.app.options.apiKey !== "TU_API_KEY";
+    
+    if (isFirebaseConfigured) {
+      try {
+        await updateDoc(doc(db, "orders", orderId), { status: newStatus });
+      } catch (error) {
+        console.error("Error updating order status:", error);
+      }
+    } else {
+      const localOrders = JSON.parse(localStorage.getItem("local_orders") || "[]");
+      const updatedOrders = localOrders.map(o => o.id === orderId ? { ...o, status: newStatus } : o);
+      localStorage.setItem("local_orders", JSON.stringify(updatedOrders));
+      setOrders(updatedOrders);
     }
   };
 
-  const loadOrders = async () => {
+  const handleDeleteOrder = async (orderId) => {
+    if (!window.confirm("¿Estás seguro de eliminar esta orden?")) return;
+    const isFirebaseConfigured = auth?.app?.options?.apiKey && auth.app.options.apiKey !== "TU_API_KEY";
+
+    if (isFirebaseConfigured) {
+      try {
+        await deleteDoc(doc(db, "orders", orderId));
+      } catch (error) {
+        console.error("Error deleting order:", error);
+      }
+    } else {
+      const localOrders = JSON.parse(localStorage.getItem("local_orders") || "[]");
+      const updatedOrders = localOrders.filter(o => o.id !== orderId);
+      localStorage.setItem("local_orders", JSON.stringify(updatedOrders));
+      setOrders(updatedOrders);
+    }
+  };
+
+  const toggleProductVisibility = async (productId, currentStatus) => {
     try {
-      const querySnapshot = await getDocs(collection(db, "orders"));
-      const ordersData = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setOrders(ordersData);
+      await updateDoc(doc(db, "products", productId), { active: !currentStatus });
     } catch (error) {
-      console.error("Error loading orders:", error);
+      console.error("Error toggling product visibility:", error);
     }
   };
 
@@ -122,7 +192,7 @@ function AdminPanel() {
     try {
       const productRef = doc(db, "products", productId);
       await updateDoc(productRef, { [field]: value });
-      loadProducts();
+      // loadProducts() ya no es necesario con onSnapshot
     } catch (error) {
       console.error("Error updating product:", error);
     }
@@ -156,6 +226,7 @@ function AdminPanel() {
         description: newProduct.description || "",
         tag: newProduct.tag || "Nuevo",
         image: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800",
+        active: true,
         createdAt: new Date().toISOString(),
       };
 
@@ -180,7 +251,7 @@ function AdminPanel() {
         image: null,
       });
       setShowAddProduct(false);
-      loadProducts();
+      // loadProducts() ya no es necesario con onSnapshot
       alert("Producto agregado correctamente");
     } catch (error) {
       console.error("Error adding product:", error);
@@ -193,7 +264,7 @@ function AdminPanel() {
 
     try {
       await deleteDoc(doc(db, "products", productId));
-      loadProducts();
+      // loadProducts() ya no es necesario con onSnapshot
       alert("Producto eliminado");
     } catch (error) {
       console.error("Error deleting product:", error);
@@ -274,6 +345,12 @@ function AdminPanel() {
 
         <nav className="admin-menu">
           <button
+            className={activeTab === "dashboard" ? "active" : ""}
+            onClick={() => setActiveTab("dashboard")}
+          >
+            🏠 Vista General
+          </button>
+          <button
             className={activeTab === "productos" ? "active" : ""}
             onClick={() => setActiveTab("productos")}
           >
@@ -285,20 +362,11 @@ function AdminPanel() {
           >
             🛒 Órdenes
           </button>
-          <button
-            className={activeTab === "estadisticas" ? "active" : ""}
-            onClick={() => setActiveTab("estadisticas")}
-          >
-            📊 Estadísticas
-          </button>
         </nav>
 
         <div className="admin-side-actions">
-          <button className="refresh-btn" onClick={() => {
-            loadProducts();
-            loadOrders();
-          }}>
-            🔄 Actualizar
+          <button className="refresh-btn" onClick={() => window.location.reload()}>
+            🔄 Refrescar Panel
           </button>
           <button className="logout-btn" onClick={handleLogout}>
             🚪 Cerrar sesión
@@ -307,6 +375,95 @@ function AdminPanel() {
       </aside>
 
       <main className="admin-content">
+        {activeTab === "dashboard" && (
+          <div className="dashboard-view">
+            <div className="admin-header">
+              <span className="mini-label">Resumen en vivo</span>
+              <h1>Vista General</h1>
+              <p>Monitorea las métricas, órdenes y productos desde un solo lugar.</p>
+            </div>
+
+            <div className="stats-grid">
+              <div className="stat-card highlight">
+                <span>Total Ingresos</span>
+                <strong>₡{stats.totalRevenue.toFixed(0)}</strong>
+                <small>Suma de todas las órdenes</small>
+              </div>
+
+              <div className="stat-card soft">
+                <span>Órdenes</span>
+                <strong>{stats.totalOrders}</strong>
+                <small>{stats.pendingOrders} pendientes</small>
+              </div>
+
+              <div className="stat-card soft">
+                <span>Productos</span>
+                <strong>{stats.totalProducts}</strong>
+                <small>En el menú</small>
+              </div>
+
+              <div className="stat-card soft">
+                <span>Promedio</span>
+                <strong>
+                  ₡
+                  {stats.totalOrders > 0
+                    ? (stats.totalRevenue / stats.totalOrders).toFixed(0)
+                    : 0}
+                </strong>
+                <small>Por orden</small>
+              </div>
+            </div>
+
+            <div className="dashboard-sections">
+              <section className="dashboard-section">
+                <div className="section-header-inline">
+                  <h2>Órdenes Recibidas</h2>
+                  <button className="text-btn" onClick={() => setActiveTab("ordenes")}>Ver todas →</button>
+                </div>
+                {orders.length === 0 ? (
+                  <div className="empty-box small">
+                    <p>No hay órdenes aún.</p>
+                  </div>
+                ) : (
+                  <div className="orders-mini-list">
+                    {orders.slice(0, 5).map(order => (
+                      <div key={order.id} className="order-mini-card">
+                        <div className="mini-card-left">
+                          <strong>#{order.ticketNumber || '---'}</strong>
+                          <span>{order.customerName}</span>
+                        </div>
+                        <div className="mini-card-right">
+                          <span className={`status-dot ${order.status?.toLowerCase()}`}></span>
+                          <strong>₡{order.total?.toFixed(0)}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="dashboard-section">
+                <div className="section-header-inline">
+                  <h2>Gestión de productos</h2>
+                  <button className="text-btn" onClick={() => setActiveTab("productos")}>Gestionar →</button>
+                </div>
+                <div className="products-mini-grid">
+                  {products.slice(0, 4).map(product => (
+                    <div key={product.id} className="product-mini-item">
+                      <img src={product.image} alt={product.name} />
+                      <div className="product-mini-info">
+                        <h4>{product.name}</h4>
+                        <span>₡{product.price}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {products.length === 0 && <p className="empty-text">No hay productos en el menú.</p>}
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
+
         {activeTab === "productos" && (
           <>
             <div className="admin-header">
@@ -427,18 +584,31 @@ function AdminPanel() {
               ) : (
                 products.map((product) => (
                   <div key={product.id} className="product-card-admin">
-                    <div className="product-image-admin">
-                      <img src={product.image} alt={product.name} />
-                      <label className="change-image-btn">
-                        📷 Cambiar imagen
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => handleChangeProductImage(product.id, e)}
-                          style={{ display: "none" }}
-                        />
-                      </label>
-                    </div>
+                      <div className="product-image-admin">
+                        <img src={product.image} alt={product.name} />
+                        <div className="admin-product-badges">
+                          <span className={`status-badge ${product.active !== false ? 'active' : 'inactive'}`}>
+                            {product.active !== false ? 'Visible' : 'Oculto'}
+                          </span>
+                        </div>
+                        <div className="image-edit-overlay">
+                          <label className="change-image-btn">
+                            📷 Cambiar
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleChangeProductImage(product.id, e)}
+                              style={{ display: "none" }}
+                            />
+                          </label>
+                          <button 
+                            className={`visibility-toggle-btn ${product.active !== false ? 'hide' : 'show'}`}
+                            onClick={() => toggleProductVisibility(product.id, product.active !== false)}
+                          >
+                            {product.active !== false ? '🚫 Ocultar' : '👁️ Mostrar'}
+                          </button>
+                        </div>
+                      </div>
 
                     <div className="product-details-admin">
                       <span className="product-tag-admin">{product.tag}</span>
@@ -451,7 +621,7 @@ function AdminPanel() {
                           onChange={(e) =>
                             handleUpdateProduct(product.id, "name", e.target.value)
                           }
-                          onBlur={() => loadProducts()}
+                          onBlur={() => console.log("Field updated")}
                         />
                       </label>
 
@@ -463,7 +633,7 @@ function AdminPanel() {
                           onChange={(e) =>
                             handleUpdateProduct(product.id, "category", e.target.value)
                           }
-                          onBlur={() => loadProducts()}
+                          onBlur={() => console.log("Field updated")}
                         />
                       </label>
 
@@ -479,7 +649,7 @@ function AdminPanel() {
                               parseFloat(e.target.value)
                             )
                           }
-                          onBlur={() => loadProducts()}
+                          onBlur={() => console.log("Field updated")}
                         />
                       </label>
 
@@ -494,7 +664,7 @@ function AdminPanel() {
                               e.target.value
                             )
                           }
-                          onBlur={() => loadProducts()}
+                          onBlur={() => console.log("Field updated")}
                           rows="3"
                         ></textarea>
                       </label>
@@ -530,13 +700,26 @@ function AdminPanel() {
               <div className="orders-grid">
                 {orders.map((order) => (
                   <div key={order.id} className="order-card">
-                    <div className="order-top">
-                      <div>
-                        <h4>{order.customerName}</h4>
-                        <p>{order.customerPhone}</p>
+                      <div className="order-top">
+                        <div>
+                          <div className="order-header-main">
+                            <span className="order-ticket">#{order.ticketNumber || '---'}</span>
+                            <h4>{order.customerName}</h4>
+                          </div>
+                          <p className="order-phone">{order.customerPhone}</p>
+                        </div>
+                        <select 
+                          className={`order-status-select ${order.status?.toLowerCase()}`}
+                          value={order.status} 
+                          onChange={(e) => handleUpdateOrderStatus(order.id, e.target.value)}
+                        >
+                          <option value="Pendiente">⏳ Pendiente</option>
+                          <option value="Preparando">🍳 Preparando</option>
+                          <option value="Listo">✅ Listo</option>
+                          <option value="Entregado">🥡 Entregado</option>
+                          <option value="Cancelado">❌ Cancelado</option>
+                        </select>
                       </div>
-                      <div className="order-badge">{order.status}</div>
-                    </div>
 
                     <div className="order-meta">
                       <span>💳 {order.paymentMethod}</span>
@@ -554,65 +737,26 @@ function AdminPanel() {
                       ))}
                     </div>
 
-                    <div className="order-totals">
-                      <div>
-                        <span>Subtotal</span>
-                        <strong>₡{order.subtotal?.toFixed(0)}</strong>
+                      <div className="order-totals">
+                        <div>
+                          <span>Subtotal</span>
+                          <strong>₡{order.subtotal?.toFixed(0)}</strong>
+                        </div>
+                        <div className="final-total">
+                          <span>Total</span>
+                          <strong>₡{order.total?.toFixed(0)}</strong>
+                        </div>
                       </div>
-                      <div>
-                        <span>IVA 13%</span>
-                        <strong>₡{order.iva?.toFixed(0)}</strong>
-                      </div>
-                      <div className="final-total">
-                        <span>Total</span>
-                        <strong>₡{order.total?.toFixed(0)}</strong>
+
+                      <div className="order-actions-footer">
+                        <button className="delete-order-btn" onClick={() => handleDeleteOrder(order.id)}>
+                          🗑️ Eliminar orden
+                        </button>
                       </div>
                     </div>
-                  </div>
                 ))}
               </div>
             )}
-          </>
-        )}
-
-        {activeTab === "estadisticas" && (
-          <>
-            <div className="admin-header">
-              <span className="mini-label">Dashboard</span>
-              <h1>Estadísticas</h1>
-              <p>Vista general del restaurante</p>
-            </div>
-
-            <div className="stats-grid">
-              <div className="stat-card highlight">
-                <span>Total Ingresos</span>
-                <strong>₡{stats.totalRevenue.toFixed(0)}</strong>
-                <small>Suma de todas las órdenes</small>
-              </div>
-
-              <div className="stat-card soft">
-                <span>Órdenes</span>
-                <strong>{stats.totalOrders}</strong>
-                <small>{stats.pendingOrders} pendientes</small>
-              </div>
-
-              <div className="stat-card soft">
-                <span>Productos</span>
-                <strong>{stats.totalProducts}</strong>
-                <small>En el menú</small>
-              </div>
-
-              <div className="stat-card soft">
-                <span>Promedio</span>
-                <strong>
-                  ₡
-                  {stats.totalOrders > 0
-                    ? (stats.totalRevenue / stats.totalOrders).toFixed(0)
-                    : 0}
-                </strong>
-                <small>Por orden</small>
-              </div>
-            </div>
           </>
         )}
 
